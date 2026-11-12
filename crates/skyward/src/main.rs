@@ -99,8 +99,10 @@ enum Cmd {
     #[cfg(target_os = "android")]
     Mkfs { device: PathBuf, filesystem: String },
     /// Map the booted slot's partitions from super and mount them read-only.
+    #[cfg(target_os = "android")]
     Mount,
     /// Unmount what `mount` mounted and remove its device-mapper devices.
+    #[cfg(target_os = "android")]
     Umount,
     /// Print where an update stands: its state, the slot it came from, each
     /// snapshot as libsnapshot keeps it and as the kernel maps it, and the
@@ -277,6 +279,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Identify { file } => identify(&file),
+        #[cfg(target_os = "android")]
         Cmd::Mount => {
             match skyward_vab::current_slot()? {
                 Some(slot) => {
@@ -313,6 +316,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        #[cfg(target_os = "android")]
         Cmd::Umount => match skyward_vab::current_slot()? {
             Some(slot) => skyward_vab::unmount_partitions(slot),
             None => {

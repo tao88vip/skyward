@@ -1,9 +1,10 @@
 name: Build
 
 # Every push is linted and tested, and the recovery is built for every
-# device in devices/, each image zipped. A tag starting with v publishes
-# those zips as a release, each shown as the phone it is for. Run by hand,
-# it can build for one device alone.
+# device in devices/ that names a reproducible stock source, each image
+# zipped. A tag starting with v publishes those zips as a draft release,
+# each shown as the phone it is for. Run by hand, it can build for one
+# device alone when that device also names a stock source.
 on:
   push:
     branches: ["**"]
@@ -80,9 +81,22 @@ jobs:
         run: |
           if [ -n "$DEVICE" ]; then
             test -f "devices/$DEVICE.toml"
+            grep -q '^\[stock\]' "devices/$DEVICE.toml" || {
+              echo "devices/$DEVICE.toml has no [stock] build source"
+              exit 1
+            }
             echo "devices=$(jq -nc --arg device "$DEVICE" '[$device]')" >> "$GITHUB_OUTPUT"
           else
-            echo "devices=$(basename -s .toml devices/*.toml | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+            # A device file may document a port before its stock recovery is
+            # available from a reproducible source. Keep that port out of the
+            # automatic matrix until it can actually be built.
+            available=()
+            for config in devices/*.toml; do
+              if grep -q '^\[stock\]' "$config"; then
+                available+=("$(basename -s .toml "$config")")
+              fi
+            done
+            echo "devices=$(printf '%s\n' "${available[@]}" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           fi
 
   recovery:
@@ -150,7 +164,7 @@ jobs:
   release:
     name: Publish the release
     if: github.ref_type == 'tag'
-    needs: [check, recovery]
+    needs: [check, devices, recovery]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -175,12 +189,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          DEVICES: ${{ needs.devices.outputs.devices }}
         run: |
           zips=()
-          for config in devices/*.toml; do
-            device=$(basename "$config" .toml)
-            model=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["device"]["model"])' "$config")
+          for device in $(jq -r '.[]' <<< "$DEVICES"); do
+            model=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["device"]["model"])' "devices/$device.toml")
             zip=$(ls images/skyward-"$GITHUB_REF_NAME"-"$device"-*.zip)
             zips+=("$zip#$model ($device)")
           done
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes "${zips[@]}" images/SHA256SUMS
+          # Keep a tag build private until its assets and generated notes have
+          # been reviewed. A maintainer promotes the draft release by hand.
+          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --generate-notes "${zips[@]}" images/SHA256SUMS

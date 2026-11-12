@@ -6,6 +6,21 @@ English | [简体中文](README.zh-CN.md)
 
 Skyward is a recovery written in Rust, from scratch.
 
+> [!WARNING]
+> This repository is an unofficial research fork for learning and device
+> testing. It provides no stability, compatibility, maintenance, or update
+> guarantee, and flashing may cause data loss or make a device unbootable.
+> Before changing any partition, back up every partition that may be written.
+> See [DISCLAIMER.md](DISCLAIMER.md), [FORK_NOTICE.md](FORK_NOTICE.md) and
+> [SECURITY.md](SECURITY.md).
+> See [FEATURES_CRUX.md](FEATURES_CRUX.md) for crux's exact support and test
+> status.
+>
+> Development used Codex Desktop with the DeepSeek V4.1 flash 1017 model.
+> AI-assisted contributions are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md);
+> Shimakaze is responsible for testing on the physical device and for the
+> resulting feedback.
+
 <p align="center">
   <img src="assets/home.png" width="30%" alt="Home">
   <img src="assets/settings-dark.png" width="30%" alt="Settings in dark mode">
@@ -123,10 +138,16 @@ the data partition.
 ## Installing Skyward
 
 Skyward needs an unlocked bootloader. Download the zip for your phone from
-[Releases](https://github.com/kirklin/skyward/releases), where each shows as the
-phone's model and codename, such as Xiaomi 17 Ultra (nezha). Check it against
-`SHA256SUMS`, unzip it, and flash the image inside to the recovery partition of
-the slot the phone runs from, with the phone in fastboot mode:
+[this fork's Releases](https://github.com/tao88vip/skyward/releases), where each
+shows as the phone's model and codename, such as Xiaomi 17 Ultra (nezha). Check
+it against `SHA256SUMS`, unzip it, and flash the image inside to the recovery
+partition of the slot the phone runs from, with the phone in fastboot mode:
+
+> [!CAUTION]
+> Before flashing, restoring, formatting or wiping a partition, make and verify
+> a backup of the corresponding stock partition. The author and contributors
+> accept no liability for data loss, device damage or other loss. See
+> [DISCLAIMER.md](DISCLAIMER.md).
 
 ```sh
 unzip skyward-v0.2.0-nezha-OS4.0.4.0.XPACNXM.zip

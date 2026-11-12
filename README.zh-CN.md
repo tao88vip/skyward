@@ -6,6 +6,18 @@
 
 Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 
+> [!WARNING]
+> 本仓库是非官方兴趣研究分支，仅用于学习和设备测试。不提供稳定性、兼容性、
+> 维护周期或更新保证，刷写可能导致数据丢失或设备无法启动。修改任何分区前
+> 都必须备份可能被写入的分区。详见 [DISCLAIMER.md](DISCLAIMER.md)、
+> [FORK_NOTICE.md](FORK_NOTICE.md) 与 [SECURITY.md](SECURITY.md)。
+> crux 的详细功能、限制和测试状态见
+> [FEATURES_CRUX.zh-CN.md](FEATURES_CRUX.zh-CN.md)。
+>
+> 开发过程全程使用 Codex Desktop，模型为 DeepSeek V4.1 flash 1017。
+> AI 协作贡献见 [CONTRIBUTORS.md](CONTRIBUTORS.md)；Shimakaze 负责人工
+> 真机测试和反馈。
+
 <p align="center">
   <img src="assets/home.png" width="30%" alt="首页">
   <img src="assets/settings-dark.png" width="30%" alt="深色模式下的设置">
@@ -116,7 +128,12 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 
 ## 安装 Skyward
 
-Skyward 需要已解锁的 bootloader。从 [Releases](https://github.com/kirklin/skyward/releases) 下载对应机型的 zip，每个文件都标有机型和代号，例如 Xiaomi 17 Ultra (nezha)。使用 `SHA256SUMS` 核对并解压之后，在手机处于 fastboot 模式的时候，把其中的镜像刷入当前运行槽位的 recovery 分区：
+Skyward 需要已解锁的 bootloader。从[本 Fork 的 Releases](https://github.com/tao88vip/skyward/releases)下载对应机型的 zip，每个文件都标有机型和代号，例如 Xiaomi 17 Ultra (nezha)。使用 `SHA256SUMS` 核对并解压之后，在手机处于 fastboot 模式的时候，把其中的镜像刷入当前运行槽位的 recovery 分区：
+
+> [!CAUTION]
+> 刷入、恢复、格式化或清除分区前，必须先备份并验证对应的原厂分区。
+> 作者及贡献者不对数据丢失、设备损坏或其他损失承担责任。详见
+> [DISCLAIMER.md](DISCLAIMER.md)。
 
 ```sh
 unzip skyward-v0.2.0-nezha-OS4.0.4.0.XPACNXM.zip

@@ -1,4 +1,16 @@
 target/
+.cargo-tmp/
+$out/
+out/
+stock/
+dump_all/
+HANDOFF_*.md
+*.img
+*.mbn
+*.elf
+*.qcn
+*.raw
+*.dump
 .idea/
 .vscode/
 .DS_Store

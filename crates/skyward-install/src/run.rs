@@ -138,7 +138,8 @@ impl Installer {
         self.events.try_iter().collect()
     }
 
-    /// Write the image the installer holds to `partition` in `slots`.
+    /// Write the image the installer holds to `partition` in `slots`; an
+    /// empty list is the fixed partition of a phone without slots.
     pub fn flash(&self, partition: &'static str, slots: Vec<Slot>) {
         // Only a finished installer stops listening, and then there is
         // nothing left to write.
@@ -812,11 +813,16 @@ fn flash_image(ctx: &Context, kind: ImageKind, size: u64) -> Result<Done> {
         Ok(other) => bail!("an image waiting for its partition was told {other:?}"),
     };
     ensure!(partitions.contains(&partition), "{partition} is not among {partitions:?}");
-    ensure!(!slots.is_empty(), "no slot chosen for {partition}");
-    if [skyward_systems::store::BOOT, skyward_systems::store::INIT_BOOT].contains(&partition) {
+    if skyward_vab::current_slot()?.is_some()
+        && [skyward_systems::store::BOOT, skyward_systems::store::INIT_BOOT].contains(&partition)
+    {
         installed_boot_set()?;
     }
-    let devices: Vec<_> = slots.iter().map(|&slot| image::device(dir, partition, slot)).collect();
+    let devices: Vec<_> = if slots.is_empty() {
+        vec![dir.join(partition)]
+    } else {
+        slots.iter().map(|&slot| image::device(dir, partition, slot)).collect()
+    };
     let mut file = BufReader::with_capacity(1 << 20, File::open(fuse::PACKAGE).context("open the package")?);
     let mut told: Option<Instant> = None;
     image::flash(&mut file, size, &devices, &mut |done, total| {
@@ -831,9 +837,10 @@ fn flash_image(ctx: &Context, kind: ImageKind, size: u64) -> Result<Done> {
 /// Run the install script of the zip being served, `size` bytes, once the
 /// user agrees, or at once where the system asked for it, as Android's
 /// recovery runs one, among what the recoveries such scripts are written
-/// for give them: their shell at /sbin, and the slot's partitions mapped
-/// writable and unmounted. Where the screen asked for it, the zip is first
-/// checked to be signed with one of the phone's update keys.
+/// for give them: their shell at /sbin, the slot's partitions mapped
+/// writable and unmounted, or the fixed partition links on a phone without
+/// slots. Where the screen asked for it, the zip is first checked to be
+/// signed with one of the phone's update keys.
 fn run_script(ctx: &mut Context, size: u64) -> Result<Done> {
     if let Some(refusal) = short_of_charge(ctx.origin)? {
         return Ok(Done::Decided(Outcome::Refused(refusal)));
@@ -860,20 +867,28 @@ fn run_script(ctx: &mut Context, size: u64) -> Result<Done> {
             Ok(other) => bail!("a script waiting to be agreed to was told {other:?}"),
         }
     }
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    let slot = skyward_vab::current_slot()?;
     extract_script()?;
     shell_at_sbin()?;
-    let kept = hold(ctx, slot)?;
-    installed_boot_set()?;
+    let kept = match slot {
+        Some(slot) => hold(ctx, slot)?,
+        None => None,
+    };
+    if slot.is_some() {
+        installed_boot_set()?;
+    }
     detach_once(ctx)?;
     // While an update is in flight, the slot's partitions in super are its
     // and stay unmapped.
-    let mapped = match skyward_vab::snapshot_state()? {
-        SnapshotState::None => skyward_vab::map_slot(slot)?,
-        state => {
-            let _ = kmsg(&format!("install: the slot's partitions stay unmapped while an update is in flight ({state:?})"));
-            SlotMaps::default()
-        }
+    let mapped = match slot {
+        Some(slot) => match skyward_vab::snapshot_state()? {
+            SnapshotState::None => skyward_vab::map_slot(slot)?,
+            state => {
+                let _ = kmsg(&format!("install: the slot's partitions stay unmapped while an update is in flight ({state:?})"));
+                SlotMaps::default()
+            }
+        },
+        None => SlotMaps::default(),
     };
     let mounted = skyward_block::mount::mount_ids()?;
     let ran = run_binary(ctx);

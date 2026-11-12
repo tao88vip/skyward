@@ -15,7 +15,11 @@ pub enum Job {
     Open,
     /// Open the own files of `user` with what they entered at their screen
     /// lock; `closed` are the users whose own files are still closed.
-    Unlock { closed: Vec<Closed>, user: u32, credential: Vec<u8> },
+    Unlock {
+        closed: Vec<Closed>,
+        user: u32,
+        credential: Vec<u8>,
+    },
 }
 
 /// How a job ended: what it opened, or why it did not.
@@ -35,18 +39,24 @@ impl Decryptor {
     pub fn start(job: Job) -> Result<Decryptor> {
         let mut fds = [0; 2];
         if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
-            return Err(std::io::Error::last_os_error()).context("make the decrypting thread's wake pipe");
+            return Err(std::io::Error::last_os_error())
+                .context("make the decrypting thread's wake pipe");
         }
-        let (wake, signal) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        let (wake, signal) =
+            unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
         let (tx, ended) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("decrypt".into())
             .spawn(move || {
                 let ended_as = match job {
                     Job::Open => Ended::Opened(with_key_service(data::open_without_credential)),
-                    Job::Unlock { closed, user, credential } => {
-                        Ended::Unlocked(with_key_service(|service| data::unlock(service, &closed, user, &credential)))
-                    }
+                    Job::Unlock {
+                        closed,
+                        user,
+                        credential,
+                    } => Ended::Unlocked(with_key_service(|service| {
+                        data::unlock(service, &closed, user, &credential)
+                    })),
                 };
                 // The screen only stops listening once it has let the
                 // thread go.
@@ -54,7 +64,11 @@ impl Decryptor {
                 unsafe { libc::write(signal.as_raw_fd(), [1u8].as_ptr().cast(), 1) };
             })
             .context("start the decrypting thread")?;
-        Ok(Decryptor { ended, wake, thread: Some(thread) })
+        Ok(Decryptor {
+            ended,
+            wake,
+            thread: Some(thread),
+        })
     }
 
     pub fn fd(&self) -> RawFd {
@@ -64,7 +78,14 @@ impl Decryptor {
     /// How the job ended, once it has.
     pub fn ended(&self) -> Option<Ended> {
         let mut drain = [0u8; 8];
-        while unsafe { libc::read(self.wake.as_raw_fd(), drain.as_mut_ptr().cast(), drain.len()) } > 0 {}
+        while unsafe {
+            libc::read(
+                self.wake.as_raw_fd(),
+                drain.as_mut_ptr().cast(),
+                drain.len(),
+            )
+        } > 0
+        {}
         self.ended.try_recv().ok()
     }
 }
@@ -83,7 +104,8 @@ impl Drop for Decryptor {
 pub fn with_key_service<T>(work: impl FnOnce(&KeyMint) -> Result<T>) -> Result<T, String> {
     let done = (|| {
         let binder = Binder::open()?;
-        let service = KeyMint::open(&binder)?;
+        let hardware = Binder::hardware()?;
+        let service = KeyMint::open(&binder, &hardware)?;
         work(&service)
     })();
     done.map_err(|e| format!("{e:#}"))

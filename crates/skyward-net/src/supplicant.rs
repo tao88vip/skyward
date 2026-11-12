@@ -23,6 +23,33 @@ pub enum Security {
 }
 
 impl Security {
+    /// The name a saved network keeps for this protection.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Security::Open => "open",
+            Security::Owe => "owe",
+            Security::Wep => "wep",
+            Security::Psk => "psk",
+            Security::Sae => "sae",
+            Security::PskSae => "psk_sae",
+            Security::Enterprise => "enterprise",
+        }
+    }
+
+    /// The protection saved under `tag`.
+    pub fn from_tag(tag: &str) -> Option<Security> {
+        Some(match tag {
+            "open" => Security::Open,
+            "owe" => Security::Owe,
+            "wep" => Security::Wep,
+            "psk" => Security::Psk,
+            "sae" => Security::Sae,
+            "psk_sae" => Security::PskSae,
+            "enterprise" => Security::Enterprise,
+            _ => return None,
+        })
+    }
+
     /// What the flags of a scan result say, such as
     /// `[WPA-PSK-CCMP][WPA2-PSK-CCMP][ESS]`: each bracket a protocol
     /// written as its name, its key managements joined by `+`, then its
@@ -369,6 +396,17 @@ mod tests {
         }
         assert!(Security::PskSae.password() && !Security::Owe.password() && !Security::Open.password());
         assert!(!Security::Wep.joinable() && !Security::Enterprise.joinable() && Security::Sae.joinable());
+        for security in [
+            Security::Open,
+            Security::Owe,
+            Security::Wep,
+            Security::Psk,
+            Security::Sae,
+            Security::PskSae,
+            Security::Enterprise,
+        ] {
+            assert_eq!(Security::from_tag(security.tag()), Some(security));
+        }
     }
 
     /// Two access points as the 13 Ultra's supplicant listed them, the

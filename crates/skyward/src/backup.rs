@@ -40,6 +40,10 @@ const ENTRY_BYTES: u64 = 2048;
 /// the order a backup takes them: those the phone has.
 const BOOT: [&str; 8] = ["boot", "init_boot", "vendor_boot", "dtbo", "vbmeta", "vbmeta_system", "vbmeta_vendor", "recovery"];
 
+/// The fixed partitions that hold the installed system on a phone without
+/// slots, in the order a backup takes them.
+const SYSTEM: [&str; 6] = ["system", "system_ext", "product", "vendor", "odm", "cust"];
+
 /// The order a restore writes the parts in: what starts the phone and what
 /// it starts, then the baseband's, then the data partition's files, which
 /// take longest.
@@ -264,7 +268,7 @@ enum Source {
     /// A partition of its own, at this device.
     Block(PathBuf),
     /// One of the slot's partitions in super, by its base name.
-    Logical(String),
+    Logical(Slot, String),
     /// The data partition's files.
     Data,
 }
@@ -345,7 +349,7 @@ fn no_update() -> Result<()> {
 }
 
 fn backup(t: BackupTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<PathBuf> {
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    let slot = skyward_vab::current_slot()?;
     let [boot, system, data, efs] = t.parts;
     if system {
         no_update()?;
@@ -358,9 +362,11 @@ fn backup(t: BackupTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<Pa
     if boot {
         // The boot partitions are backed up as the installed system's,
         // whose boot set goes back into them first.
-        skyward_systems::install::ensure_installed()?;
+        if slot.is_some() {
+            skyward_systems::install::ensure_installed()?;
+        }
         for name in BOOT {
-            let device = partition(&format!("{name}{}", slot.suffix()));
+            let device = device_at(name, slot);
             if device.exists() {
                 let size = skyward_block::size_bytes(&device)?;
                 plan.push((Part::Boot, name.to_string(), Source::Block(device), size));
@@ -368,9 +374,31 @@ fn backup(t: BackupTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<Pa
         }
     }
     if system {
-        // A partition of the slot that holds nothing has nothing to keep.
-        for (base, size) in skyward_vab::slot_sizes(slot)?.into_iter().filter(|(_, size)| *size > 0) {
-            plan.push((Part::System, base.clone(), Source::Logical(base), size));
+        let partitions: Vec<(String, u64, bool)> = match slot {
+            // A partition of the slot that holds nothing has nothing to keep.
+            Some(slot) => skyward_vab::slot_sizes(slot)?
+                .into_iter()
+                .filter(|(_, size)| *size > 0)
+                .map(|(base, size)| (base, size, true))
+                .collect(),
+            // Phones without slots keep the system in fixed partitions.
+            None => SYSTEM
+                .into_iter()
+                .filter_map(|base| {
+                    let device = partition(base);
+                    device.exists().then(|| {
+                        skyward_block::size_bytes(&device)
+                            .map(|size| (base.to_string(), size, false))
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+        };
+        for (base, size, logical) in partitions {
+            let source = match (slot, logical) {
+                (Some(slot), true) => Source::Logical(slot, base.clone()),
+                _ => Source::Block(partition(&base)),
+            };
+            plan.push((Part::System, base, source, size));
         }
     }
     if data {
@@ -414,8 +442,8 @@ fn backup(t: BackupTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<Pa
                     let mut from = File::open(device).with_context(|| format!("open {}", device.display()))?;
                     copy(&mut from, &mut writer, *size, cancel, &mut telling).with_context(|| format!("back up {name}"))?;
                 }
-                Source::Logical(base) => {
-                    let whole = skyward_vab::map_whole(slot, base, &format!("skyward-backup-{base}{}", slot.suffix()), true)?;
+                Source::Logical(slot, base) => {
+                    let whole = skyward_vab::map_whole(*slot, base, &format!("skyward-backup-{base}{}", slot.suffix()), true)?;
                     let copied = File::open(&whole.device)
                         .with_context(|| format!("open {}", whole.device.display()))
                         .and_then(|mut from| copy(&mut from, &mut writer, whole.size, cancel, &mut telling));
@@ -437,7 +465,7 @@ fn backup(t: BackupTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<Pa
         }
         let data_key = if data { Some(data_key()?) } else { None };
         let manifest =
-            Manifest { format: FORMAT, device: t.device.clone(), made: t.made, slot: slot.suffix().into(), system: t.system.clone(), data_key, items };
+            Manifest { format: FORMAT, device: t.device.clone(), made: t.made, slot: slot.map(|s| s.suffix().to_string()).unwrap_or_default(), system: t.system.clone(), data_key, items };
         manifest.write(&folder, t.ownership)?;
         unsafe { libc::sync() };
         Ok(())
@@ -496,7 +524,7 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
     if manifest.device != t.device {
         return Err(Refusal::OtherPhone(manifest.device).into());
     }
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    let slot = skyward_vab::current_slot()?;
     let mut items: Vec<&Item> = manifest.items.iter().filter(|i| t.parts[index(i.part)]).collect();
     ensure!(!items.is_empty(), "nothing chosen to restore is in the backup");
     items.sort_by_key(|i| RESTORE_ORDER.iter().position(|&p| p == i.part));
@@ -505,7 +533,10 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
     if system || items.iter().any(|i| i.part == Part::Boot) {
         no_update()?;
     }
-    let sizes = if system { skyward_vab::slot_sizes(slot)? } else { Vec::new() };
+    let sizes = match (system, slot) {
+        (true, Some(slot)) => skyward_vab::slot_sizes(slot)?,
+        _ => Vec::new(),
+    };
     for item in &items {
         match item.part {
             Part::Boot | Part::Efs => {
@@ -515,9 +546,21 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
                 ensure!(size == item.stored.size, "{} holds {size} bytes, and its backup {}", device.display(), item.stored.size);
             }
             Part::System => {
-                let size = sizes.iter().find(|(base, _)| *base == item.name).map(|(_, size)| *size);
-                if size != Some(item.stored.size) {
-                    return Err(Refusal::Resized(item.name.clone()).into());
+                match slot {
+                    Some(_) => {
+                        let size = sizes.iter().find(|(base, _)| *base == item.name).map(|(_, size)| *size);
+                        if size != Some(item.stored.size) {
+                            return Err(Refusal::Resized(item.name.clone()).into());
+                        }
+                    }
+                    None => {
+                        let device = partition(&item.name);
+                        ensure!(device.exists(), "the phone has no partition {}", device.display());
+                        let size = skyward_block::size_bytes(&device)?;
+                        if size != item.stored.size {
+                            return Err(Refusal::Resized(item.name.clone()).into());
+                        }
+                    }
                 }
             }
             Part::Data => {
@@ -545,7 +588,7 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
     // The boot partitions are restored as the installed system's, whose
     // boot set goes back into them first, so that the second system's is
     // not left kept as being there.
-    if items.iter().any(|i| i.part == Part::Boot) {
+    if items.iter().any(|i| i.part == Part::Boot) && slot.is_some() {
         skyward_systems::install::ensure_installed()?;
     }
     // Once anything is written, the restore goes on to its end.
@@ -560,10 +603,15 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
             }
             Part::System => {
                 let mut telling = Telling::new(tell, k, item.stored.size * 2, false);
-                let whole = skyward_vab::map_whole(slot, &item.name, &format!("skyward-restore-{}{}", item.name, slot.suffix()), false)?;
-                let written = write_image(&whole.device, &t.folder, &item.stored, &mut telling);
-                skyward_vab::unmap_whole(&whole)?;
-                written?;
+                match slot {
+                    Some(slot) => {
+                        let whole = skyward_vab::map_whole(slot, &item.name, &format!("skyward-restore-{}{}", item.name, slot.suffix()), false)?;
+                        let written = write_image(&whole.device, &t.folder, &item.stored, &mut telling);
+                        skyward_vab::unmap_whole(&whole)?;
+                        written?;
+                    }
+                    None => write_image(&partition(&item.name), &t.folder, &item.stored, &mut telling)?,
+                }
             }
             Part::Data => {
                 let mut telling = Telling::new(tell, k, item.stored.size, false);
@@ -584,10 +632,19 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
 }
 
 /// The partition a part of a backup goes back to.
-fn target(item: &Item, slot: Slot) -> PathBuf {
+fn target(item: &Item, slot: Option<Slot>) -> PathBuf {
     match item.part {
         Part::Efs => partition(&item.name),
-        _ => partition(&format!("{}{}", item.name, slot.suffix())),
+        _ => device_at(&item.name, slot),
+    }
+}
+
+/// Partition `name` among the links the phone gives them, with the slot
+/// suffix on an A/B phone and without one on a phone without slots.
+fn device_at(name: &str, slot: Option<Slot>) -> PathBuf {
+    match slot {
+        Some(slot) => partition(&format!("{name}{}", slot.suffix())),
+        None => partition(name),
     }
 }
 
@@ -609,4 +666,35 @@ fn write_image(device: &Path, folder: &Path, stored: &Stored, telling: &mut Tell
     let read = store::digest(back, stored.size, &mut |n| telling.done(stored.size + n)).with_context(|| format!("read {} back", device.display()))?;
     ensure!(read == stored.sha256, "{} reads back different from the backup", device.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boot_partitions_take_a_slot_only_on_an_ab_phone() {
+        assert_eq!(device_at("boot", None), partition("boot"));
+        assert_eq!(device_at("boot", Some(Slot::A)), partition("boot_a"));
+        assert_eq!(device_at("boot", Some(Slot::B)), partition("boot_b"));
+    }
+
+    #[test]
+    fn backup_targets_use_fixed_partitions_without_slots() {
+        let boot = Item {
+            part: Part::Boot,
+            name: "recovery".into(),
+            stored: Stored {
+                files: Vec::new(),
+                size: 0,
+                stored: 0,
+                compressed: false,
+                sha256: String::new(),
+            },
+        };
+        assert_eq!(target(&boot, None), partition("recovery"));
+        assert_eq!(target(&boot, Some(Slot::B)), partition("recovery_b"));
+        assert!(SYSTEM.contains(&"system"));
+        assert!(SYSTEM.contains(&"vendor"));
+    }
 }

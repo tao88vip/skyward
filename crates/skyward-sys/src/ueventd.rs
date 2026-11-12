@@ -2,14 +2,19 @@ use std::collections::HashMap;
 
 /// Where the phone keeps the rules for its own device nodes, and the names
 /// its own partitions give to the accounts those rules name.
-pub const RULE_FILES: [&str; 2] = ["/vendor/etc/ueventd.rc", "/odm/etc/ueventd.rc"];
+pub const RULE_FILES: [&str; 4] = [
+    "/vendor/ueventd.rc",
+    "/vendor/etc/ueventd.rc",
+    "/odm/ueventd.rc",
+    "/odm/etc/ueventd.rc",
+];
 pub const PASSWD_FILES: [&str; 2] = ["/vendor/etc/passwd", "/odm/etc/passwd"];
 pub const GROUP_FILES: [&str; 2] = ["/vendor/etc/group", "/odm/etc/group"];
 
 /// The accounts Android fixes once and for all. The rules, and the init
 /// scripts of the phone's own programs, name them rather than their
 /// numbers, and a recovery has no list of its own to look them up in.
-const ACCOUNTS: [(&str, u32); 33] = [
+const ACCOUNTS: [(&str, u32); 38] = [
     ("root", 0),
     ("system", 1000),
     ("radio", 1001),
@@ -42,6 +47,11 @@ const ACCOUNTS: [(&str, u32); 33] = [
     ("readproc", 3009),
     ("wakelock", 3010),
     ("uhid", 3011),
+    ("net_bt_admin", 3001),
+    ("net_bt", 3002),
+    ("inet", 3003),
+    ("net_raw", 3004),
+    ("net_admin", 3005),
     ("nobody", 9999),
 ];
 
@@ -67,12 +77,20 @@ impl Rule {
 /// The accounts a phone adds to the fixed ones, read from the passwd and
 /// group files on its own partitions.
 pub fn accounts(files: &[&str]) -> HashMap<String, u32> {
-    let mut out: HashMap<String, u32> = ACCOUNTS.iter().map(|&(n, id)| (n.to_string(), id)).collect();
+    let mut out: HashMap<String, u32> = ACCOUNTS
+        .iter()
+        .map(|&(n, id)| (n.to_string(), id))
+        .collect();
     for file in files {
-        let Ok(text) = std::fs::read_to_string(file) else { continue };
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
         for line in text.lines() {
             let mut fields = line.split(':');
-            let (Some(name), Some(_), Some(id)) = (fields.next(), fields.next(), fields.next()) else { continue };
+            let (Some(name), Some(_), Some(id)) = (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
             if let Ok(id) = id.parse() {
                 out.insert(name.to_string(), id);
             }
@@ -102,11 +120,22 @@ pub fn rules(text: &str, known: &HashMap<String, u32>) -> Vec<Rule> {
             continue;
         }
         let fields: Vec<&str> = line.split_whitespace().collect();
-        let [path, mode, user, group, ..] = fields[..] else { continue };
-        let (Ok(mode), Some(uid), Some(gid)) = (u32::from_str_radix(mode.trim_start_matches('0'), 8), account(known, user), account(known, group)) else {
+        let [path, mode, user, group, ..] = fields[..] else {
             continue;
         };
-        out.push(Rule { path: path.to_string(), mode, uid, gid });
+        let (Ok(mode), Some(uid), Some(gid)) = (
+            u32::from_str_radix(mode.trim_start_matches('0'), 8),
+            account(known, user),
+            account(known, group),
+        ) else {
+            continue;
+        };
+        out.push(Rule {
+            path: path.to_string(),
+            mode,
+            uid,
+            gid,
+        });
     }
     out
 }
@@ -119,7 +148,13 @@ pub fn rules(text: &str, known: &HashMap<String, u32>) -> Vec<Rule> {
 pub fn apply() -> anyhow::Result<usize> {
     use anyhow::Context;
     use std::path::Path;
-    let known = accounts(&PASSWD_FILES.iter().chain(GROUP_FILES.iter()).copied().collect::<Vec<_>>());
+    let known = accounts(
+        &PASSWD_FILES
+            .iter()
+            .chain(GROUP_FILES.iter())
+            .copied()
+            .collect::<Vec<_>>(),
+    );
     let mut rules = Vec::new();
     for file in RULE_FILES {
         if let Ok(text) = std::fs::read_to_string(file) {
@@ -129,7 +164,9 @@ pub fn apply() -> anyhow::Result<usize> {
     let mut changed = 0;
     for node in nodes(Path::new("/dev"))? {
         if let Some(rule) = rules.iter().rev().find(|r| r.matches(&node)) {
-            set(&node, rule).with_context(|| format!("give {node} the owner and permissions its phone describes"))?;
+            set(&node, rule).with_context(|| {
+                format!("give {node} the owner and permissions its phone describes")
+            })?;
             changed += 1;
         }
     }
@@ -151,7 +188,9 @@ fn nodes(dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
         };
         for entry in listing {
             let entry = entry.with_context(|| format!("read {}", dir.display()))?;
-            let kind = entry.file_type().with_context(|| format!("look at {}", entry.path().display()))?;
+            let kind = entry
+                .file_type()
+                .with_context(|| format!("look at {}", entry.path().display()))?;
             if kind.is_symlink() {
                 continue;
             }
@@ -189,8 +228,19 @@ mod tests {
 
     #[test]
     fn a_rule_gives_a_node_its_owner_and_permissions() {
-        let parsed = rules("/dev/smcinvoke            0660   system     drmrpc\n", &known());
-        assert_eq!(parsed, vec![Rule { path: "/dev/smcinvoke".into(), mode: 0o660, uid: 1000, gid: 1026 }]);
+        let parsed = rules(
+            "/dev/smcinvoke            0660   system     drmrpc\n",
+            &known(),
+        );
+        assert_eq!(
+            parsed,
+            vec![Rule {
+                path: "/dev/smcinvoke".into(),
+                mode: 0o660,
+                uid: 1000,
+                gid: 1026
+            }]
+        );
     }
 
     #[test]
@@ -216,7 +266,10 @@ mod tests {
 
     #[test]
     fn a_rule_can_stand_for_a_family_of_nodes() {
-        let parsed = rules("/dev/dma_heap/qcom,*      0444   system     system\n", &known());
+        let parsed = rules(
+            "/dev/dma_heap/qcom,*      0444   system     system\n",
+            &known(),
+        );
         assert!(parsed[0].matches("/dev/dma_heap/qcom,qseecom"));
         assert!(!parsed[0].matches("/dev/dma_heap/system"));
         let exact = rules("/dev/kgsl 0666 system system\n", &known());
@@ -226,8 +279,15 @@ mod tests {
 
     #[test]
     fn the_later_of_two_rules_for_a_node_has_the_say() {
-        let parsed = rules("/dev/x 0600 root root\n/dev/x 0660 system drmrpc\n", &known());
-        let last = parsed.iter().rev().find(|r| r.matches("/dev/x")).expect("a rule for it");
+        let parsed = rules(
+            "/dev/x 0600 root root\n/dev/x 0660 system drmrpc\n",
+            &known(),
+        );
+        let last = parsed
+            .iter()
+            .rev()
+            .find(|r| r.matches("/dev/x"))
+            .expect("a rule for it");
         assert_eq!((last.mode, last.uid, last.gid), (0o660, 1000, 1026));
     }
 

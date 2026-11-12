@@ -219,6 +219,25 @@ mod tests {
     }
 
     #[test]
+    fn a_non_ab_phone_is_asked_about_by_its_installed_build() {
+        let crux = Installed {
+            device: "crux".into(),
+            version: "V13.0.1.0.RFXCNXM".into(),
+            android: "11".into(),
+            unlocked: true,
+        };
+        let q: serde_json::Value = serde_json::from_str(&crux.question()).unwrap();
+        assert_eq!(q["d"], "crux");
+        assert_eq!(q["p"], "crux");
+        assert_eq!(q["r"], "CN");
+        assert_eq!(q["c"], "11");
+        assert_eq!(q["ov"], "V13.0.1.0.RFXCNXM");
+        assert_eq!(q["v"], "MIUI-V13.0.1.0.RFXCNXM");
+        assert_eq!(q["unlock"], "1");
+        assert!(q.get("options").is_none());
+    }
+
+    #[test]
     fn a_region_is_read_from_the_device_name() {
         let region = |device: &str| Installed { device: device.into(), ..thirteen_ultra() }.region();
         assert_eq!(region("ishtar"), "CN");

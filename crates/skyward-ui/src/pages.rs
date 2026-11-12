@@ -146,6 +146,19 @@ pub fn confirm_label(which: Confirm, s: &State) -> (&'static str, bool) {
 pub const HOME_TITLE: &str = "Skyward";
 pub const SEARCH_HINT: Text = ["搜索功能与分区", "搜尋功能與分割區", "Search features and partitions"];
 
+/// The warning shown before an operation can write over, erase or rewrite a
+/// partition. It is deliberately repeated at the decisive pages rather than
+/// being left only in the repository notice.
+const BACKUP_WARNING: Text = [
+    "刷入、恢复、格式化或清除分区前，请先备份对应原厂分区。作者及贡献者不对数据丢失、设备损坏或其他损失承担责任。",
+    "刷入、還原、格式化或清除分割區前，請先備份對應的原廠分割區。作者及貢獻者不對資料遺失、裝置損壞或其他損失承擔責任。",
+    "Before flashing, restoring, formatting or wiping a partition, back up the corresponding stock partition. The author and contributors accept no liability for data loss, device damage or other loss.",
+];
+
+fn backup_warning(c: &mut Canvas, t: &Theme, f: &Fonts, y: f32, l: Lang) -> f32 {
+    widgets::footnote(c, t, f, y, l.pick(BACKUP_WARNING))
+}
+
 const REBOOT_TARGETS: [(Text, Option<Text>); 6] = [
     (["系统", "系統", "System"], None),
     (["恢复模式", "復原模式", "Recovery"], None),
@@ -502,7 +515,7 @@ pub fn mount(cx: &Ctx) -> Frame {
                     "Only the current slot {slot}'s partitions in super show here, all mounted read-only."
                 ),
                 None => l
-                    .pick(["仅显示 super 中的分区，挂载后均为只读。", "僅顯示 super 中的分割區，掛載後均為唯讀。", "Only partitions in super show here, all mounted read-only."])
+                    .pick(["本机使用固定分区；切换开关后，分区以只读方式挂载。", "本機使用固定分割區；切換開關後，分割區以唯讀方式掛載。", "This phone uses fixed partitions; they are mounted read-only."])
                     .into(),
             };
             widgets::footnote(&mut c, t, f, y, &about)
@@ -908,19 +921,25 @@ pub fn install(cx: &Ctx) -> Frame {
     let from_usb = Action::Open(Screen::Choose(Place::UsbDrive));
     let mut out = hits(&methods.rows[methods.rows.len() - 3..], &[from_storage, from_usb, Action::Sideload]);
     // A phone that can hold a second system installs one from here too.
-    let what = l.pick(match cx.state.dual_boot {
-        true => [
+    let what = l.pick(match (cx.state.dual_boot, cx.info.slot.is_some()) {
+        (true, _) => [
             "支持安装 A/B 完整更新包、带安装脚本的刷机包和第二系统的安装包，以及刷入 boot、init_boot、vendor_boot、recovery、dtbo、vbmeta 分区镜像。系统更新将安装到另一个槽位，重启后从该槽位启动；第二系统安装在 data 分区中，可在「双系统」中切换。选择文件时仅列出文件夹以及 .zip、.img 文件。",
             "支援安裝 A/B 完整更新檔、帶有安裝指令碼的刷機包和第二系統的安裝檔，以及刷入 boot、init_boot、vendor_boot、recovery、dtbo、vbmeta 分割區映像檔。系統更新將安裝到另一個槽位，重新啟動後從該槽位啟動；第二系統安裝在 data 分割區中，可在「雙系統」中切換。選擇檔案時僅列出資料夾以及 .zip、.img 檔案。",
             "Installs A/B full OTA packages, flashable zips with an install script and second systems' packages, and flashes boot, init_boot, vendor_boot, recovery, dtbo and vbmeta partition images. A system update installs to the other slot, which starts after a reboot; a second system installs into the data partition, and Dual boot switches to it. Choosing a file lists only folders and .zip and .img files.",
         ],
-        false => [
+        (false, true) => [
             "支持安装 A/B 完整更新包和带安装脚本的刷机包，以及刷入 boot、init_boot、vendor_boot、recovery、dtbo、vbmeta 分区镜像。系统更新将安装到另一个槽位，重启后从该槽位启动。选择文件时仅列出文件夹以及 .zip、.img 文件。",
             "支援安裝 A/B 完整更新檔和帶有安裝指令碼的刷機包，以及刷入 boot、init_boot、vendor_boot、recovery、dtbo、vbmeta 分割區映像檔。系統更新將安裝到另一個槽位，重新啟動後從該槽位啟動。選擇檔案時僅列出資料夾以及 .zip、.img 檔案。",
             "Installs A/B full OTA packages and flashable zips with an install script, and flashes boot, init_boot, vendor_boot, recovery, dtbo and vbmeta partition images. A system update installs to the other slot, which starts after a reboot. Choosing a file lists only folders and .zip and .img files.",
         ],
+        (false, false) => [
+            "支持安装带安装脚本的刷机包，以及刷入固定的 boot、vendor_boot、recovery、dtbo、vbmeta 分区镜像。本机没有 A/B 槽位，不安装需要切换槽位的 A/B 完整更新包。选择文件时仅列出文件夹以及 .zip、.img 文件。",
+            "支援安裝帶有安裝指令碼的刷機包，以及刷入固定的 boot、vendor_boot、recovery、dtbo、vbmeta 分割區映像檔。本機沒有 A/B 槽位，不安裝需要切換槽位的 A/B 完整更新檔。選擇檔案時僅列出資料夾以及 .zip、.img 檔案。",
+            "Installs flashable zips with an install script and flashes images into the fixed boot, vendor_boot, recovery, dtbo and vbmeta partitions. This phone has no A/B slots, so A/B full OTA packages that need a slot switch are not installed. Choosing a file lists only folders and .zip and .img files.",
+        ],
     });
     let y = widgets::footnote(&mut c, t, f, methods.bottom, what);
+    let y = backup_warning(&mut c, t, f, y, l);
     let y = widgets::section(&mut c, t, f, y, l.pick(["选项", "選項", "Options"]));
     let check = Row::new(l.pick(["验证刷机包签名", "驗證刷機包簽章", "Verify zip signatures"])).trail(Trail::Switch(cx.state.check_signature));
     let signature = widgets::list(&mut c, t, f, y, &[check]);
@@ -1221,14 +1240,20 @@ pub fn installing(cx: &Ctx) -> Frame {
             let parts = widgets::list(&mut c, t, f, y, &rows);
             let choose: Vec<Action> = (0..choice.partitions.len()).map(Action::FlashPartition).collect();
             out.extend(hits(&parts.rows, &choose));
-            let y = widgets::section(&mut c, t, f, parts.bottom, l.pick(["槽位", "槽位", "Slot"]));
-            let titles = Pick::ALL.map(|p| pick_title(l, p, i.slot));
-            let rows: Vec<Row> =
-                Pick::ALL.iter().zip(&titles).map(|(p, title)| Row::new(title).trail(Trail::Check(*p == choice.pick))).collect();
-            let picks = widgets::list(&mut c, t, f, y, &rows);
-            out.extend(hits(&picks.rows, &Pick::ALL.map(Action::FlashSlots)));
+            let bottom = match i.slot {
+                Some(_) => {
+                    let y = widgets::section(&mut c, t, f, parts.bottom, l.pick(["槽位", "槽位", "Slot"]));
+                    let titles = Pick::ALL.map(|p| pick_title(l, p, i.slot));
+                    let rows: Vec<Row> =
+                        Pick::ALL.iter().zip(&titles).map(|(p, title)| Row::new(title).trail(Trail::Check(*p == choice.pick))).collect();
+                    let picks = widgets::list(&mut c, t, f, y, &rows);
+                    out.extend(hits(&picks.rows, &Pick::ALL.map(Action::FlashSlots)));
+                    picks.bottom
+                }
+                None => parts.bottom,
+            };
             let (label, danger) = confirm_label(Confirm::Flash, cx.state);
-            let track = widgets::confirm(&mut c, t, f, picks.bottom + t.m.dp(28.0), label, danger, s.confirm);
+            let track = widgets::confirm(&mut c, t, f, bottom + t.m.dp(28.0), label, danger, s.confirm);
             out.push(Hit { rect: track, action: Action::Confirm(Confirm::Flash) });
             let note = l.pick(match s.source {
                 Source::Computer => [
@@ -1247,7 +1272,8 @@ pub fn installing(cx: &Ctx) -> Frame {
                     "Flashing writes over what the partition holds. Going back cancels it.",
                 ],
             });
-            widgets::footnote(&mut c, t, f, track.y + track.h, note)
+            let y = widgets::footnote(&mut c, t, f, track.y + track.h, note);
+            backup_warning(&mut c, t, f, y, l)
         }
         Install::Confirming { version, wipe } => {
             let (title, color, icon, detail, which) = if *wipe {
@@ -1497,8 +1523,12 @@ fn finished(
             afterwards_of(c, cx, y, true)
         }
         Outcome::Flashed { partition, slots } => {
-            let slots = fmt::slots(l, slots);
-            let detail = tr!(l, "{partition} 已刷入{slots}。", "{partition} 已刷入{slots}。", "Flashed to {partition} in {slots}.");
+            let detail = if slots.is_empty() {
+                tr!(l, "{partition} 已刷入。", "{partition} 已刷入。", "Flashed to {partition}.")
+            } else {
+                let slots = fmt::slots(l, slots);
+                tr!(l, "{partition} 已刷入{slots}。", "{partition} 已刷入{slots}。", "Flashed to {partition} in {slots}.")
+            };
             let y = widgets::list(c, t, f, top, &[standing(l.pick(["刷入成功", "刷入成功", "Flashed"]), GREEN, Icon::Install, &detail)]).bottom;
             let mut rows = vec![restart];
             let mut acts = vec![Action::RebootTo(Target::System)];
@@ -1644,9 +1674,9 @@ fn wipe_row(w: Wipe, s: &State) -> (&'static str, String) {
         Wipe::AppData => (
             ["应用数据", "應用程式資料", "App data"],
             l.pick([
-                "/data/data、/data/user、/data/user_de，以及内部存储中的 Android/data、Android/media，应用将恢复到初始状态",
-                "/data/data、/data/user、/data/user_de，以及內部儲存空間中的 Android/data、Android/media，應用程式將恢復到初始狀態",
-                "/data/data, /data/user, /data/user_de, and Android/data and Android/media in internal storage. Apps go back to how they were first installed",
+                "/data/data、/data/user、/data/user_de，以及内部存储中的 Android/data、Android/media，应用将恢复到初始状态；未解锁用户的数据也会按文件系统可见的加密目录清除",
+                "/data/data、/data/user、/data/user_de，以及內部儲存空間中的 Android/data、Android/media，應用程式將恢復到初始狀態；未解鎖使用者的資料也會依檔案系統可見的加密目錄清除",
+                "/data/data, /data/user, /data/user_de, and Android/data and Android/media in internal storage. Apps go back to how they were first installed; locked users' data is also cleared through the encrypted directory names the filesystem still shows",
             ])
             .into(),
         ),
@@ -1657,9 +1687,9 @@ fn wipe_row(w: Wipe, s: &State) -> (&'static str, String) {
         Wipe::AppCaches => (
             ["应用缓存", "應用程式快取", "App caches"],
             l.pick([
-                "各应用数据中的 cache、code_cache，以及 Android/data 中的 cache，应用将按需重新生成",
-                "各應用程式資料中的 cache、code_cache，以及 Android/data 中的 cache，應用程式將視需要重新產生",
-                "cache and code_cache in each app's data, and cache in Android/data. Apps make them again as they need them",
+                "各应用数据中的 cache、code_cache，以及 Android/data 中的 cache，应用将按需重新生成；未解锁用户（如应用双开）的缓存会按系统记录的 inode 清除，无需该用户密码",
+                "各應用程式資料中的 cache、code_cache，以及 Android/data 中的 cache，應用程式將視需要重新產生；未解鎖使用者（如應用程式雙開）的快取會依系統記錄的 inode 清除，無需該使用者密碼",
+                "cache and code_cache in each app's data, and cache in Android/data. Apps make them again as they need them; locked users' caches are cleared through the inode notes Android keeps, without that user's password",
             ])
             .into(),
         ),
@@ -1745,6 +1775,7 @@ pub fn wipe(cx: &Ctx) -> Frame {
         "Wiping app data or app caches needs the data partition decrypted first. What is wiped can't be brought back.",
     ]);
     let y = widgets::footnote(&mut c, t, f, y, note);
+    let y = backup_warning(&mut c, t, f, y, l);
     let (label, danger) = confirm_label(Confirm::Wipe, cx.state);
     let track = widgets::confirm(&mut c, t, f, y + t.m.dp(24.0), label, danger, s.confirm);
     out.push(Hit { rect: track, action: Action::Confirm(Confirm::Wipe) });
@@ -1810,7 +1841,10 @@ pub fn backup(cx: &Ctx) -> Frame {
     let mut out = Vec::new();
     let top = t.m.content_top;
     let y = widgets::section_first(&mut c, t, f, top, l.pick(["备份内容", "備份內容", "Contents"]));
-    let system = fmt::snapshot_backup_note(l, &i.snapshot).unwrap_or(l.pick(["当前槽位在 super 中的分区", "目前槽位在 super 中的分割區", "The current slot's partitions in super"]));
+    let system = match i.slot {
+        Some(_) => fmt::snapshot_backup_note(l, &i.snapshot).unwrap_or_else(|| l.pick(["当前槽位在 super 中的分区", "目前槽位在 super 中的分割區", "The current slot's partitions in super"])),
+        None => l.pick(["固定 system、vendor 等系统分区", "固定 system、vendor 等系統分割區", "The fixed system, vendor and other system partitions"]),
+    };
     let data = l.pick(match s.data == Data::Open {
         true => ["应用、账户和设置，不包括内部存储、锁屏密码和指纹", "應用程式、帳戶和設定，不包括內部儲存空間、螢幕鎖定密碼和指紋", "Apps, accounts and settings, without internal storage, the screen lock or fingerprints"],
         false => [
@@ -1971,6 +2005,7 @@ pub fn restore_backup(cx: &Ctx) -> Frame {
                         y = widgets::footnote(&mut c, t, f, y, &warn);
                     }
                 }
+                let y = backup_warning(&mut c, t, f, y, l);
                 let (label, danger) = confirm_label(Confirm::Restore, cx.state);
                 let track = widgets::confirm(&mut c, t, f, y + t.m.dp(24.0), label, danger, s.confirm);
                 out.push(Hit { rect: track, action: Action::Confirm(Confirm::Restore) });
@@ -2385,6 +2420,7 @@ pub fn filesystem(cx: &Ctx) -> Frame {
     if !row.others.is_empty() {
         y = widgets::footnote(&mut c, t, f, y, l.pick(["更换后，分区中的内容无法恢复。", "更換後，分割區中的內容無法復原。", "Once changed, what the partition held can't be brought back."]));
     }
+    let y = backup_warning(&mut c, t, f, y, l);
     let (label, danger) = confirm_label(Confirm::Filesystem, s);
     let track = widgets::confirm(&mut c, t, f, y + t.m.dp(24.0), label, danger, s.confirm);
     out.push(Hit { rect: track, action: Action::Confirm(Confirm::Filesystem) });
@@ -2749,6 +2785,7 @@ pub fn skyward_update(cx: &Ctx) -> Frame {
         l.pick(["更新完成后，重启到恢复模式即可使用新版本。", "更新完成後，重新啟動到復原模式即可使用新版本。", "Once updated, reboot to recovery to use the new version."]),
     ];
     let y = widgets::notes(&mut c, t, f, y + t.m.card_gap, l.pick(NOTES), &points);
+    let y = backup_warning(&mut c, t, f, y, l);
     Frame::new(t, fit(c, t, y), out, l.pick(SKYWARD_UPDATE), top)
 }
 
@@ -2957,6 +2994,12 @@ pub fn wlan(cx: &Ctx) -> Frame {
             y = list.bottom;
         }
     }
+    let remembered = l.pick([
+        "成功连接的网络会被记住，下次启动时自动重连；密码只保存在受 root 保护的 Recovery 设置文件中。",
+        "成功連線的網路會被記住，下次啟動時自動重新連線；密碼只儲存在受 root 保護的 Recovery 設定檔中。",
+        "Networks that join successfully are remembered and reconnect next start. Passwords are kept only in Recovery's root-protected settings file.",
+    ]);
+    let y = widgets::footnote(&mut c, t, f, y + t.m.card_gap, remembered);
     Frame::new(t, fit(c, t, y), out, l.pick(WLAN), top)
 }
 
@@ -3824,12 +3867,21 @@ pub fn fastboot(cx: &Ctx) -> Frame {
     }
     let y = widgets::section_first(&mut c, t, f, top, l.pick(["状态", "狀態", "Status"]));
     let state = widgets::list(&mut c, t, f, y, &facts);
-    let note = l.pick([
-        "你可以在电脑上使用 fastboot 命令刷写分区，包括 super 中的逻辑分区。",
-        "你可以在電腦上使用 fastboot 指令刷寫分割區，包括 super 中的邏輯分割區。",
-        "fastboot commands on the computer can flash partitions, the logical ones in super among them.",
-    ]);
+    let note = l.pick(if i.slot.is_some() {
+        [
+            "你可以在电脑上使用 fastboot 命令刷写分区，包括 super 中的逻辑分区。",
+            "你可以在電腦上使用 fastboot 指令刷寫分割區，包括 super 中的邏輯分割區。",
+            "fastboot commands on the computer can flash partitions, the logical ones in super among them.",
+        ]
+    } else {
+        [
+            "你可以在电脑上使用 fastboot 命令刷写本机的固定分区。",
+            "你可以在電腦上使用 fastboot 指令刷寫本機的固定分割區。",
+            "fastboot commands on the computer can flash this phone's fixed partitions.",
+        ]
+    });
     let y = widgets::footnote(&mut c, t, f, state.bottom, note);
+    let y = backup_warning(&mut c, t, f, y, l);
     let y = widgets::section(&mut c, t, f, y, l.pick(["退出 fastboot", "結束 fastboot", "Leave fastboot"]));
     let rows: Vec<Row> = FASTBOOT_CHOICES.iter().map(|&(title, _)| Row::new(l.pick(title)).trail(Trail::None)).collect();
     let choices = widgets::list(&mut c, t, f, y, &rows);
@@ -3965,6 +4017,7 @@ pub fn cant_start(cx: &Ctx) -> Frame {
     let choices = widgets::list(&mut c, t, f, y, &rows);
     out.extend(hits(&choices.rows, &[Action::RebootTo(Target::System), Action::Dismiss]));
     let y = widgets::footnote(&mut c, t, f, choices.bottom, l.pick(["恢复出厂设置后，数据无法恢复。", "恢復原廠設定後，資料無法復原。", "Data a factory reset wipes can't be brought back."]));
+    let y = backup_warning(&mut c, t, f, y, l);
     let (label, danger) = confirm_label(Confirm::FactoryReset, cx.state);
     let track = widgets::confirm(&mut c, t, f, y + t.m.dp(24.0), label, danger, s.confirm);
     out.push(Hit { rect: track, action: Action::Confirm(Confirm::FactoryReset) });

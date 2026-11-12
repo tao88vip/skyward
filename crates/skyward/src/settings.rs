@@ -7,8 +7,9 @@
 use anyhow::{Context, Result};
 use skyward_block::mount;
 use skyward_ui::settings::{Kept, Settings};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 const METADATA: &str = "/metadata";
@@ -32,7 +33,7 @@ pub fn read() -> Result<Kept> {
 fn read_file() -> Result<Kept> {
     match fs::read_to_string(FILE) {
         Ok(text) => match Settings::read(&text) {
-            Ok(settings) => Ok(Kept::Settings(settings)),
+            Ok(settings) => Ok(Kept::Settings(Box::new(settings))),
             Err(e) => {
                 skyward_sys::kmsg(&format!("{FILE} does not read as settings, and is written afresh: {e:#}"))?;
                 Ok(Kept::Nothing)
@@ -57,9 +58,19 @@ pub fn write(settings: &Settings) -> Result<()> {
 
 fn write_file(settings: &Settings) -> Result<()> {
     fs::create_dir_all(FOLDER).with_context(|| format!("make {FOLDER}"))?;
-    let mut file = File::create(WRITING).with_context(|| format!("make {WRITING}"))?;
+    fs::set_permissions(FOLDER, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("keep {FOLDER} to root"))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(WRITING)
+        .with_context(|| format!("make {WRITING}"))?;
     file.write_all(settings.text().as_bytes()).with_context(|| format!("write {WRITING}"))?;
     file.sync_all().with_context(|| format!("write {WRITING}"))?;
+    fs::set_permissions(WRITING, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("keep {WRITING} to root"))?;
     fs::rename(WRITING, FILE).with_context(|| format!("move {WRITING} over {FILE}"))?;
     File::open(FOLDER).and_then(|folder| folder.sync_all()).with_context(|| format!("write {FOLDER}"))
 }
@@ -71,6 +82,9 @@ fn with_metadata<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
     if mount::is_mount_point(at)? {
         return work();
     }
+    // The recovery ramdisk on some non-A/B phones does not carry the
+    // mount point, even though the phone has a metadata partition.
+    fs::create_dir_all(at).with_context(|| format!("make {METADATA}"))?;
     mount::mount_ro(&Path::new(skyward_block::BY_NAME).join("metadata"), at)?;
     let done = work();
     mount::umount(at)?;

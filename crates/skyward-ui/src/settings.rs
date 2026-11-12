@@ -9,6 +9,7 @@ use crate::app::{Place, State, SCREEN_OFF, TIME_ZONES};
 use crate::Lang;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use skyward_net::supplicant::Security;
 
 /// How long settings stand unchanged before they are written, so a slider
 /// dragged across the page is written once, after the hand stops.
@@ -49,9 +50,36 @@ pub struct Settings {
     pub vibration: f32,
     /// A computer connected over USB is offered internal storage.
     pub file_transfer: bool,
+    /// The WLAN shown when Recovery starts, and the networks it keeps.
+    pub wifi: Wifi,
     pub install: Install,
     pub backup: Backup,
     pub logs: Logs,
+}
+
+/// WLAN settings kept between starts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Wifi {
+    /// Turn the WLAN on as the pages start.
+    pub enabled: bool,
+    /// Networks most recently joined first.
+    pub networks: Vec<WifiNetwork>,
+}
+
+/// A network Recovery can join again without asking for its password.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WifiNetwork {
+    /// The SSID in hexadecimal, since it need not be UTF-8.
+    pub ssid: String,
+    /// [`Security::tag`] as it was when the network was joined.
+    pub security: String,
+    /// The password, where joining needs one. The settings file is root only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// The network answers only scans that name it.
+    pub hidden: bool,
 }
 
 /// The install page's options.
@@ -126,6 +154,7 @@ impl Settings {
             vibrate: state.vibrate,
             vibration: state.vibration,
             file_transfer: state.file_transfer,
+            wifi: Wifi::default(),
             install: Install { check_signature: state.check_signature, keep_recovery: state.keep_recovery },
             backup: Backup {
                 parts: names(&state.backup, &PARTS),
@@ -201,6 +230,75 @@ impl Settings {
     }
 }
 
+impl Wifi {
+    /// Put `ssid` first among the networks kept, replacing an older entry
+    /// for the same name.
+    pub fn remember(&mut self, ssid: &[u8], security: Security, password: Option<&str>, hidden: bool) {
+        self.enabled = true;
+        self.networks.retain(|n| n.ssid_bytes().as_deref() != Some(ssid));
+        self.networks.insert(
+            0,
+            WifiNetwork {
+                ssid: hexadecimal(ssid),
+                security: security.tag().into(),
+                password: password.map(str::to_string),
+                hidden,
+            },
+        );
+    }
+
+    /// The first network that can be joined again.
+    pub fn first(&self) -> Option<SavedWifi> {
+        self.networks.iter().find_map(WifiNetwork::saved)
+    }
+}
+
+impl WifiNetwork {
+    pub fn ssid_bytes(&self) -> Option<Vec<u8>> {
+        unhexadecimal(&self.ssid)
+    }
+
+    pub fn security(&self) -> Option<Security> {
+        Security::from_tag(&self.security)
+    }
+
+    pub fn saved(&self) -> Option<SavedWifi> {
+        let ssid = self.ssid_bytes()?;
+        let security = self.security()?;
+        if !security.joinable() {
+            return None;
+        }
+        let password = self.password.clone().unwrap_or_default();
+        if security.password() && password.is_empty() {
+            return None;
+        }
+        Some(SavedWifi { ssid, security, password, hidden: self.hidden })
+    }
+}
+
+/// What the WLAN thread needs to join a kept network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedWifi {
+    pub ssid: Vec<u8>,
+    pub security: Security,
+    pub password: String,
+    pub hidden: bool,
+}
+
+fn hexadecimal(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhexadecimal(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
+        .collect()
+}
+
 /// The names of those of `all` that are `ticked`.
 fn names(ticked: &[bool], all: &[&str]) -> Vec<String> {
     all.iter().zip(ticked).filter(|(_, &on)| on).map(|(name, _)| name.to_string()).collect()
@@ -214,7 +312,7 @@ fn picked<const N: usize>(kept: &[String], all: &[&str; N]) -> [bool; N] {
 /// What the settings file held as the recovery started.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kept {
-    Settings(Settings),
+    Settings(Box<Settings>),
     /// No settings: no file, or one that does not read as settings.
     Nothing,
     /// Where the file is could not be read; it is left alone this time.
@@ -225,7 +323,7 @@ impl Kept {
     /// The settings the file held, if it held any.
     pub fn settings(&self) -> Option<&Settings> {
         match self {
-            Kept::Settings(settings) => Some(settings),
+            Kept::Settings(settings) => Some(settings.as_ref()),
             Kept::Nothing | Kept::Unreadable => None,
         }
     }
@@ -246,11 +344,17 @@ pub struct Keeper {
 impl Keeper {
     pub fn new(kept: &Kept) -> Keeper {
         let holds = match kept {
-            Kept::Settings(settings) => Some(Some(settings.clone())),
+            Kept::Settings(settings) => Some(Some(settings.as_ref().clone())),
             Kept::Nothing => Some(None),
             Kept::Unreadable => None,
         };
         Keeper { holds, standing: None }
+    }
+
+    /// Whether the file may be written, rather than left alone because it
+    /// could not be read.
+    pub fn writable(&self) -> bool {
+        self.holds.is_some()
     }
 
     /// The settings to write at `now`, given those the pages `show`: none
@@ -326,6 +430,28 @@ mod tests {
     }
 
     #[test]
+    fn a_wifi_joined_once_is_kept_first_and_can_be_joined_again() {
+        let mut wifi = Wifi::default();
+        wifi.remember(b"Skyward\xff", Security::Sae, Some("a password"), false);
+        wifi.remember(b"Old", Security::Psk, Some("12345678"), false);
+        wifi.remember(b"Skyward\xff", Security::Sae, Some("a password"), false);
+        assert!(wifi.enabled);
+        assert_eq!(wifi.networks.len(), 2);
+        assert_eq!(wifi.networks[0].ssid, "536b7977617264ff");
+        let settings = Settings { wifi: wifi.clone(), ..Settings::default() };
+        assert_eq!(Settings::read(&settings.text()).unwrap().wifi, wifi);
+        assert_eq!(
+            wifi.first(),
+            Some(SavedWifi {
+                ssid: b"Skyward\xff".to_vec(),
+                security: Security::Sae,
+                password: "a password".into(),
+                hidden: false,
+            })
+        );
+    }
+
+    #[test]
     fn each_value_is_kept_as_what_it_means() {
         let state = State { screen_off: 3, time_zone: 1, backup: [true, false, false, true], ..State::default() };
         let text = Settings::of(&state).text();
@@ -375,7 +501,7 @@ mod tests {
 
     #[test]
     fn changed_settings_are_written_once_they_have_stood_for_a_moment() {
-        let mut keeper = Keeper::new(&Kept::Settings(Settings::default()));
+        let mut keeper = Keeper::new(&Kept::Settings(Box::new(Settings::default())));
         assert_eq!(keeper.due(Settings::default(), 0), None, "what the file holds is not written again");
         let dark = Settings { dark: true, ..Settings::default() };
         assert_eq!(keeper.due(dark.clone(), 1_000), None);
@@ -405,10 +531,12 @@ mod tests {
     #[test]
     fn a_file_that_could_not_be_read_is_left_alone_until_its_place_is_made_afresh() {
         let mut keeper = Keeper::new(&Kept::Unreadable);
+        assert!(!keeper.writable());
         let dark = Settings { dark: true, ..Settings::default() };
         keeper.due(dark.clone(), 0);
         assert_eq!(keeper.due(dark.clone(), 10_000), None);
         keeper.remade();
+        assert!(keeper.writable());
         keeper.due(dark.clone(), 10_000);
         assert_eq!(keeper.due(dark.clone(), 12_000), Some(dark.clone()));
         keeper.written(dark.clone());

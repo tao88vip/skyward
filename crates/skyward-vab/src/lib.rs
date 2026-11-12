@@ -264,6 +264,15 @@ impl Update {
 }
 
 pub fn snapshot_state() -> Result<SnapshotState> {
+    snapshot_state_for(current_slot()?)
+}
+
+/// Virtual A/B update state for a phone that may or may not have slots.
+/// Phones without slots have no virtual A/B snapshots to read.
+fn snapshot_state_for(slot: Option<Slot>) -> Result<SnapshotState> {
+    if slot.is_none() {
+        return Ok(SnapshotState::None);
+    }
     if !skyward_block::mount::is_mount_point(Path::new(METADATA))? {
         return Ok(SnapshotState::Unknown);
     }
@@ -405,6 +414,15 @@ mod tests {
         assert_eq!(Slot::B.letter(), "B");
         assert_eq!((Slot::A.number(), Slot::B.number()), (0, 1));
         assert_eq!(Slot::from_suffix("_c"), None);
+    }
+
+    #[test]
+    fn a_non_ab_phone_has_no_virtual_snapshot_state() {
+        assert_eq!(
+            snapshot_state_for(None).unwrap(),
+            SnapshotState::None,
+            "there are no virtual A/B snapshots to read"
+        );
     }
 
     fn encoded(state: UpdateState) -> Vec<u8> {

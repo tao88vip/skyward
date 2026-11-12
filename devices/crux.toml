@@ -1,0 +1,304 @@
+[device]
+codename = "crux"
+brand = "Xiaomi"
+model = "Mi 9 Pro 5G"
+ab = false
+soc = { hans = "骁龙 855+ 移动平台", hant = "驍龍 855+ 行動平台", en = "Snapdragon 855+ Mobile Platform" }
+os_version_prop = "ro.build.version.incremental"
+
+[display]
+width = 1080
+height = 2340
+density = 440
+
+[modules]
+sources = ["vendor"]
+
+# The modem partition holds the WLAN firmware and the secure world's image
+# files. The stock recovery table does not mount it.
+[firmware]
+partition = "modem"
+
+# The persist partition holds the secure world's state and is where the
+# stock table expects it.
+[partitions]
+mounted = ["persist"]
+
+# The secure world reaches back into Android through listeners qseecomd
+# registers. It is started first, before the two service directories and the
+# services that use the secure world.
+[[service]]
+path = "/vendor/bin/qseecomd"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/apex/com.android.art.release/lib64",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+ready_nodes = ["/dev/qseecom", "/dev/ion"]
+user = "root"
+groups = ["root"]
+
+# Vendor services register their binder interfaces with the vendor service
+# manager. The recovery ramdisk carries hwservicemanager but neither ordinary
+# service manager.
+[[service]]
+path = "/mnt/system/system/bin/servicemanager"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/apex/com.android.art.release/lib64",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+]
+user = "system"
+groups = ["system", "readproc"]
+
+[[service]]
+path = "/vendor/bin/vndservicemanager"
+args = ["/dev/vndbinder"]
+libraries = [
+    "/mnt/system/system/apex/com.android.vndk.current/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+]
+user = "system"
+groups = ["system", "readproc"]
+
+# Android 11's hardware services register with the HIDL directory. The stock
+# recovery carries its init rule but not the program, so use the installed
+# system's own binary and libraries.
+[[service]]
+path = "/mnt/system/system/bin/hwservicemanager"
+libraries = ["/mnt/system/system/lib64/bootstrap", "/mnt/system/system/lib64"]
+ready_property = "hwservicemanager.ready"
+user = "system"
+groups = ["system", "readproc"]
+
+# crux runs Android 11's Keymaster 4.0 rather than the AIDL KeyMint service
+# found on newer Skyward devices.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.keymaster@4.0-service-qti"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+ready_hardware_service = "android.hardware.keymaster@4.0::IKeymasterDevice/default"
+user = "system"
+groups = ["system", "drmrpc"]
+
+# The credential service checks the screen lock that guards a user's own
+# files.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
+user = "system"
+groups = ["system"]
+
+# The touch controller reports absolute coordinates through the kernel input
+# device directly. Xiaomi's touch feature service creates and owns the two
+# auxiliary nodes its driver exposes, including the fingerprint-area state.
+[[service]]
+path = "/vendor/bin/hw/vendor.xiaomi.hardware.touchfeature@1.0-service"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+ready_hardware_service = "vendor.xiaomi.hardware.touchfeature@1.0::ITouchFeature/default"
+user = "system"
+groups = ["system"]
+
+# Qualcomm's QMI services must be up before the WLAN host driver is loaded.
+# Loading qca_cld3_wlan during early recovery makes icnss register against an
+# unavailable modem/service-locator path and leave the driver permanently
+# unprobed. This is the order the installed system uses at boot.
+[[service]]
+path = "/vendor/bin/qrtr-ns"
+args = ["-f"]
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+user = "vendor_qrtr"
+groups = ["vendor_qrtr"]
+capabilities = ["NET_BIND_SERVICE"]
+
+# Qualcomm's WLAN firmware is brought up by cnss-daemon through the
+# peripheral manager. The stock init starts both before Wi-Fi is enabled.
+[[service]]
+path = "/vendor/bin/pd-mapper"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+user = "system"
+groups = ["system"]
+
+# The modem's root protection domain uses pd-mapper to discover the WLAN user
+# protection domain, then fetches wlanmdsp.mbn and the other PD images from
+# this QRTR TFTP server. Without it the modem reaches ONLINE, but wlan_pd never
+# starts and icnss never receives a WLFW server or completes its QMI handshake.
+[[service]]
+path = "/vendor/bin/tftp_server"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+user = "root"
+groups = ["root"]
+
+[[service]]
+path = "/vendor/bin/pm-service"
+libraries = [
+    "/mnt/system/system/apex/com.android.vndk.current/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+# Keep this one root in recovery: changing to system makes Android's linker
+# enter secure mode and ignore the VNDK-first library path, so pm-service
+# cannot find the vendor libbinder.so built for its Binder ABI.
+user = "root"
+groups = ["root"]
+
+[[service]]
+path = "/vendor/bin/rmt_storage"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+user = "root"
+groups = ["root"]
+
+# The stock system's ipa_fws.rc writes 1 to /dev/ipa before loading qca. This
+# starts the IPA firmware and publishes its SMMU state. Without it, qca's
+# hdd_init_qdf_ctx sees WLAN SMMU enabled and IPA SMMU disabled, and icnss
+# reports the host probe as -EFAULT (-14) before cfg/mode requests are sent.
+[[service]]
+path = "/system/bin/sh"
+args = ["-c", "echo 1 > /dev/ipa"]
+oneshot = true
+
+# The stock init starts pm-proxy as soon as pm-service is running. It connects
+# the WLAN platform driver to the peripheral manager and starts modem-backed
+# WLAN firmware. Loading qca before pm-proxy is the order the installed
+# system uses.
+[[service]]
+path = "/system/bin/insmod"
+args = ["/vendor/lib/modules/qca_cld3_wlan.ko"]
+oneshot = true
+
+[[service]]
+path = "/vendor/bin/pm-proxy"
+libraries = [
+    "/mnt/system/system/apex/com.android.vndk.current/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+user = "system"
+groups = ["system"]
+
+[[service]]
+path = "/vendor/bin/cnss-daemon"
+args = ["-n", "-l"]
+libraries = [
+    "/mnt/system/system/apex/com.android.vndk.current/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+user = "system"
+groups = ["system", "inet", "net_admin", "wifi"]
+capabilities = ["NET_ADMIN"]
+
+# QCA6390 over the older qcacld driver. The vendor firmware folder already
+# links to the vendor configuration and to the persist MAC file; the latter
+# target is absent on the stock system as well, so the driver uses its NV
+# fallback. The driver's control node starts the radio. It stays out of
+# [modules].load because pm-proxy must start immediately after the driver:
+# the worker only writes ON once the driver, modem and WLAN firmware are up.
+[wlan]
+modules = ["qca_cld3_wlan"]
+writes = [{ path = "/dev/wlan", value = "ON" }]
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+libraries = [
+    "/mnt/system/system/apex/com.android.runtime/lib64",
+    "/mnt/system/system/apex/com.android.runtime/lib64/bionic",
+    "/mnt/system/system/lib64",
+    "/system/lib64",
+    "/vendor/lib64",
+]
+service = "android.hardware.wifi.supplicant@1.3::ISupplicant/default"
+probe = "http://connect.rom.miui.com/generate_204"
+
+[update]
+server = "https://update.miui.com/updates/miotaV3.php"
+
+# No [stock] section is intentional. Xiaomi's V13.0.1.0.RFXCNXM recovery
+# package contains boot.img and the system images, but no payload.bin and no
+# recovery.img; the published fastboot package likewise does not expose a
+# stock recovery image. skyward-pack therefore cannot reproduce the base
+# recovery from an official package. Do not add a package-only [stock] entry
+# that makes `skyward-pack stock --out` fail. A release build needs the exact
+# stock recovery separately, identified by
+# 71fefef85ebc3d46399ee42fe6fb7f02d4beb7ae6892b77de4494769474f78aa.
+
+# The kernel reports the AW8697 motor's calibrated resonance in f0, in
+# tenths of a hertz (1697 on this phone). f0_save only records whether the
+# calibration was saved. The motor takes custom periodic samples, so
+# Skyward makes the click and the screen-off ticks itself.
+[haptics]
+resonance = "/sys/bus/i2c/drivers/aw8697_haptic/1-005a/f0"
+strength = { lightest = 0.25, strongest = 1.0 }
+
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+data_skipped = ["vendor/tzstorage", "vendor/qtee", "vendor/fingerprint", "vendor/fpc", "vendor/goodix"]
+
+[wipe]
+logs = [
+    "/data/miuilog",
+    "/data/vendor/diag",
+    "/data/vendor/log",
+    "/data/vendor/ramdump",
+    "/data/vendor/ssrdump",
+    "/data/vendor/tombstones",
+    "/data/vendor/wlan_logs",
+]

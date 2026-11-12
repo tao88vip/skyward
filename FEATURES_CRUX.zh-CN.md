@@ -1,8 +1,11 @@
 # Xiaomi Mi 9 Pro 5G（crux）功能与测试状态
 
-适用源码版本：`0.4.4`
+适用源码版本：`0.4.5`
 测试系统：`V13.0.1.0.RFXCNXM`（Android 11）
 设备形态：单槽、非 A/B，无 `init_boot`，无 `super`
+
+`0.4.5` 新增危险操作前的备份与责任声明。下表的真机结果来自上一版
+`0.4.4`；`0.4.5` 镜像已经构建，但仍需在真机上完成本轮验收。
 
 本分支仅用于兴趣研究和设备测试，不保证稳定、持续维护或后续更新。详见
 [FORK_NOTICE.md](FORK_NOTICE.md) 与 [DISCLAIMER.md](DISCLAIMER.md)。

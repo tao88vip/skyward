@@ -1,8 +1,12 @@
 # Xiaomi Mi 9 Pro 5G (crux) Feature and Test Status
 
-Source version: `0.4.4`
+Source version: `0.4.5`
 Tested system: `V13.0.1.0.RFXCNXM` (Android 11)
 Device layout: single-slot, non-A/B, no `init_boot`, no `super`
+
+`0.4.5` adds the pre-operation backup and liability notices. Hardware
+results below were established on the preceding `0.4.4` build; the `0.4.5`
+image has been built but still needs physical-device acceptance.
 
 This branch is maintained for personal research and device testing. Stability,
 compatibility, maintenance, release cadence, and future updates are not

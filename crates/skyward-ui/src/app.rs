@@ -7209,9 +7209,16 @@ mod tests {
                 return (x, y + H as f32 - d.canvas.h as f32);
             }
         }
-        let rows = fr.rows.as_ref().expect("control on the page");
-        let answer = rows.action.expect("control on the page");
-        let k = (0..rows.count()).find(|&k| answer(k) == action).expect("control on the page");
+        let rows = fr
+            .rows
+            .as_ref()
+            .unwrap_or_else(|| panic!("no long list holds control {action:?}"));
+        let answer = rows
+            .action
+            .unwrap_or_else(|| panic!("the long list holds no control {action:?}"));
+        let k = (0..rows.count())
+            .find(|&k| answer(k) == action)
+            .unwrap_or_else(|| panic!("the long list does not hold control {action:?}"));
         let (x, y) = rows.rect(k, fr.canvas.w as f32).centre();
         (x, y - scroll)
     }

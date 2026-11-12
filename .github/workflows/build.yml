@@ -102,6 +102,10 @@ jobs:
   recovery:
     name: Recovery for ${{ matrix.device }}
     needs: [tools, devices]
+    # Branch pushes only need the shared lint, test and tool build. Device
+    # images are built for a tag or a manual run, where artifacts or a release
+    # are actually wanted.
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false

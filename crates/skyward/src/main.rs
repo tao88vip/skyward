@@ -583,6 +583,7 @@ fn booted_slot() -> Result<skyward_vab::Slot> {
 
 /// The fixed partitions a non-A/B phone can mount for the command-line
 /// tools; the pages keep their own list with the services they use.
+#[cfg(target_os = "android")]
 const PLAIN_MOUNTS: [(&str, &str); 5] = [
     ("system", "/mnt/system"),
     ("vendor", "/vendor"),

@@ -536,7 +536,7 @@ mod tests {
             ],
         );
         let parts = written(&m);
-        assert_eq!(parts.len(), 4, "a frame, the elements and one child");
+        assert_eq!(parts.len(), 3, "a frame, the elements and one child");
         assert_eq!(parts[1].1, 0, "the elements are held by the frame");
         assert_eq!(parts[2].0, INSIDE_ANOTHER);
         assert_eq!(parts[2].1, 1, "the child is held by the elements");
